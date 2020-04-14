@@ -171,7 +171,8 @@ def main():
         """, banner_color))
         print("_"*55)
         print(colored("\t\nDeveloped by I+D at lesand.cl", "green"), end="")
-        print(colored("\t\nDaniel Pacheco - Agustín Salas - Mario San Martín\n", "green"), end="")
+        print(colored("\t\n@dpachecocl - @agustin_salas_f - @W0lf_F4ng", "green"), end="")
+        print(colored("\t\nVersion 1.0\n", "green"), end="")
         print("_" * 55, end="\n\n")
         try:
             opts, args = getopt.getopt(sys.argv[1:], "af:lh", ["active-hosts", "file=", "live", "help"])
