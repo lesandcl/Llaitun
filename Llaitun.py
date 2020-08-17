@@ -2,28 +2,40 @@ try:
     import getopt
     import sys
     import protocols
+    import enumeration
     import scapy.all
     import uuid
     import sqlite3
     import random
+    import os
+    import ipaddress
     from termcolor import colored
 except ImportError as err:
     print("Some libraries are missing:")
     print(err)
 
-active_host = False
-
-
 def usage():
-    print("If you are lost... you can try this: ")
+    print("OPTIONS:")
+    print("-l/--live: live mode")
+    print("-f/--file: read a pcap file")
+    print("-a/--active-host: scan the active hosts")
+    print("-d/--detail: see enumeration details (CDP/LLDP)")
+    print("\n")
+    print("If you are lost... you can try this:")
     print("python Llaitun.py --file <inputPcapFile>")
+    print("\n")
+    print("If you want to see the active hosts in your network, use:")
+    print("python Llaitun.py -a <network>")
+    print("\n")
+    print("For more details, try this:")
+    print("python Llaitun.py -d --file <inputPcapFile>")
+    print("python Llaitun.py -d --live")
     print("\n")
     print("Or you can try live mode like this:")
     print("python Llaitun.py --live")
     print("\n")
 
-
-def static(file_pcap):
+def static(file_pcap,detail):
     if len(file_pcap) <= 0:
         print("You must enter the name of a file.")
         return
@@ -33,10 +45,12 @@ def static(file_pcap):
                 try:
                     if pdu.dst == "01:00:0c:cc:cc:cc":
                         protocols.PROT_L2_CISCO(pdu)
-                    # elif (pdu.dst == "01:80:c2:00:00:00"):
-                    # print("STP")
+                        if detail:
+                            enumeration.cdp_protocol(pdu)
                     elif pdu.dst == "01:80:c2:00:00:0e":
                         protocols.PROT_L2_LLDP(pdu)
+                        if detail:
+                            enumeration.lldp_protocol(pdu)
                     elif pdu.type == 2048:
                         if pdu.proto == 17 and pdu.payload.dst == '224.0.0.102':
                             protocols.IPv4GLBP_FHRP(pdu)
@@ -50,16 +64,13 @@ def static(file_pcap):
                             protocols.IPv4VRRP_FHRP(pdu)
                         else:
                             pass
-                            # print("Other " + str(CONT + 1))
                     elif pdu.type == 2054:
-                        if active_host:
+                        if detail:
                             protocols.HOST_ACTIVOS_ARP(pdu)
                     elif pdu.type == 34525:
                         pass
-                        # print("IPV6 agregar funcion")
                 except Exception as ex:
                     pass
-                    # print("Error: ", ex)
 
             con = sqlite3.connect(':memory:')
             cursor = con.cursor()
@@ -71,7 +82,7 @@ def static(file_pcap):
             ''')
 
             if len(protocols.REPORTE) > 0:
-                print(colored(f"[{len(protocols.REPORTE)}] vulnerable protocols detected!", "red"))
+                print(colored(f"[{len(protocols.REPORTE)}] Vulnerable protocols detected!", "red"))
             else:
                 print(colored("[0] vulnerable protocols detected!", "blue"))
                 exit(0)
@@ -81,18 +92,33 @@ def static(file_pcap):
                     "insert into escaner_pasivo (mac, ip, vuln) values ('" + mac + "','" + ip + "', '" + vuln + "')")
                 con.commit()
                 print(
-                    colored("[+] MAC: ", "green") + mac + colored(" IP: ", "green") + ip + colored(" Vulnerabilidad: ",
+                    colored("[+] MAC: ", "green") + mac + colored(" IP: ", "green") + ip + colored(" Vulnerability: ",
                                                                                                    "red") + vuln)
             con.close()
+
+            if len(protocols.REPORTE_HOST) > 0:
+                print(colored(f"\n[{len(protocols.REPORTE_HOST)}] Active Host:", "red"))
             for mac, ip in protocols.REPORTE_HOST:
-                print(colored("[+] MAC: ", "green") + mac + colored(" IP: ", "green") + ip + colored(" Active Host",
-                                                                                                     "red"))
+                print(colored("[+] MAC: ", "green") + mac + colored(" IP: ", "green") + ip)
+                
+            if len(enumeration.DATA_REPORT) > 0:
+                print(colored(f"\n[{len(enumeration.DATA_REPORT)}] Enumeration:", "red"))
+            else:
+                exit(0)
+            for data in enumeration.DATA_REPORT:
+                print("".join(data))
+
     except IOError as fileError:
         print(fileError)
 
+def check_root():
+    if os.name == "posix":
+        if os.geteuid() != 0:
+            print(colored("\n[-] It is necessary to run the script like root", "red"))
+            exit(1)
 
-def live():
-    seconds = input(colored("enter sniffing period in seconds: ", "green"))
+def live(detail):
+    seconds = input(colored("Enter sniffing period in seconds: ", "green"))
     try:
         num_of_seconds = int(seconds)
     except Exception:
@@ -105,11 +131,27 @@ def live():
         capture = scapy.all.sniff(iface=def_gw_device, timeout=num_of_seconds, filter="")
         pcap_file = write_pcap(capture)
         print("End capture.")
-        static(pcap_file)
+        static(pcap_file, detail)
     except Exception as ex:
         print(ex)
         print(colored("run as super user.", "red"))
 
+def activeHosts(network):
+    check_root()
+    try:
+        ipaddress.ip_network(network, False)
+    except ValueError:
+        print(colored("Invalid network", "red"))
+        exit(1)
+    print(colored("[*] WARNING: Llaitun is a passive scanner, but the -a/--active-hosts option performs an active scan.", "yellow"))
+    do_active_scan = input(colored("Do you want to continue?[N/y]: ", "yellow"))
+    if do_active_scan.lower() != "y":
+        print("Bye!")
+        exit(0)
+    print(colored("\n[*] Active hosts:", "red"))
+    hosts = scapy.all.arping(network,verbose=0)
+    for host in hosts[0]:
+        print(colored("[+] MAC: ", "green") + host[1].src + colored(" IP: ", "green") + host[1].psrc)
 
 def write_pcap(capture):
     unique_filename = str(uuid.uuid4())
@@ -156,8 +198,8 @@ def get_interface():
 
 
 def main():
+    detail = False
     try:
-        global active_host
         print("\n")
         color_list = ["red", "green", "yellow", "blue", "magenta", "cyan", "white"]
         banner_color = random.choice(color_list)
@@ -172,10 +214,10 @@ def main():
         print("_"*55)
         print(colored("\t\nDeveloped by I+D at lesand.cl", "green"), end="")
         print(colored("\t\n@dpachecocl - @agustin_salas_f - @W0lf_F4ng", "green"), end="")
-        print(colored("\t\nVersion 1.0\n", "green"), end="")
+        print(colored("\t\nVersion 1.1\n", "green"), end="")
         print("_" * 55, end="\n\n")
         try:
-            opts, args = getopt.getopt(sys.argv[1:], "af:lh", ["active-hosts", "file=", "live", "help"])
+            opts, args = getopt.getopt(sys.argv[1:], "df:lha:", ["detail", "file=", "live", "help", "active-hosts="])
             if not opts:
                 usage()
         except getopt.GetoptError as err:
@@ -183,17 +225,20 @@ def main():
             usage()
             sys.exit(2)
         for opt, arg in opts:
+            if opt in ("-d", "--detail"):
+                detail = True
+        for opt, arg in opts:
             if opt in ("-a", "--active-hosts"):
-                active_host = True
-
+                activeHosts(arg)
         for opt, arg in opts:
             if opt in "-h" or opt in "--help":
                 usage()
                 sys.exit()
             elif opt in ("-l", "--live"):
-                live()
+                check_root()
+                live(detail)
             elif opt in ("-f", "--file"):
-                static(arg)
+                static(arg, detail)
     except KeyboardInterrupt:
         print("Bye!")
     except Exception as err:
