@@ -13,7 +13,7 @@ try:
 except ImportError as err:
     print("Some libraries are missing:")
     print(err)
-
+# Un comentario para mostrar cambio en git
 def usage():
     print("OPTIONS:")
     print("-l/--live: live mode")
